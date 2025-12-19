@@ -42,6 +42,8 @@ class GesturePipeline:
     def preprocess_image(self, img, target_size=(224, 224)):
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         img = cv2.resize(img, target_size)
+        # Normalization: MediaPipe TFLite models usually expect [0, 1] float32
+        img = img.astype(np.float32) / 255.0
         # Add batch dimension: (1, 224, 224, 3)
         input_data = np.expand_dims(img, axis=0)
         return input_data
@@ -55,14 +57,16 @@ class GesturePipeline:
         vis_frame = frame.copy()
         
         # 1. Hand Detection
-        # Note: Actual model input size might differ, usually 224x224 or 192x192 depending on model version
         det_input = self.preprocess_image(frame, (224, 224))
-        det_out = self.det.run(det_input)
+        try:
+            det_out = self.det.run(det_input)
+        except Exception as e:
+            print(f"Inference Error (Det): {e}")
+            return vis_frame
         
-        # Helper: Parse detection output (Simplified logic)
-        # In a real scenario, you need to parse the SSD anchors / bounding boxes
-        # For this example, we'll assume we get a box or None.
-        # This part requires specific knowledge of the output tensor shape of hand_detector.tflite
+        # Helper: Parse detection output
+        # WARNING: This is a simplifed parser. Real production use requires 
+        # decoding the specific SSD anchor boxes of the model version used.
         box = self._parse_detection(det_out, frame.shape)
         
         result_text = "No Hand"
@@ -73,33 +77,41 @@ class GesturePipeline:
             cv2.rectangle(vis_frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
             
             # 2. Extract ROI for Landmarks
+            # Ensure ROI is within bounds
+            h_img, w_img, _ = frame.shape
+            y = max(0, y); x = max(0, x)
+            h = min(h, h_img - y); w = min(w, w_img - x)
+            
             roi = frame[y:y+h, x:x+w]
             if roi.size > 0:
                 land_input = self.preprocess_image(roi, (224, 224))
-                land_out = self.landmark.run(land_input)
-                
-                # 3. Landmarks -> Embedding
-                # Flatten landmarks (21 * 3) or similar structure
-                # This is highly dependent on model specifics
-                # Assuming land_out produces the correct shape for embedder
-                
-                # For demonstration, we pass dummy data if shapes mismatch
-                # In production, you verify shapes: print(land_out[0].shape)
-                
-                # 4. Classification
-                # Passing the raw detection/landmark output is not enough; 
-                # the embedder needs a specific vector derived from landmarks.
-                # Since exact tensor parsing is complex, we'll assume a dummy flow:
-                
-                # Placeholder for valid integration:
-                # embed_out = self.embedder.run(land_out[0]) 
-                # class_out = self.classifier.run(embed_out[0])
-                
-                # Using a dummy result for now to ensure code structure works
-                # idx = np.argmax(class_out[0])
-                idx = 2 # Fake "Open_Palm"
-                
-                result_text = self.labels[idx] if idx < len(self.labels) else "Unknown"
+                try:
+                    land_out = self.landmark.run(land_input)
+                    
+                    # 3. Landmarks -> Embedding
+                    # Note: gesture_embedder often takes the raw landmark tensor (1, 42) or (1, 63)
+                    # We pass the output of landmark detector directly
+                    embed_out = self.embedder.run(land_out[0])
+                    
+                    # 4. Classification
+                    # Takes the embedding vector
+                    class_out = self.classifier.run(embed_out[0])
+                    
+                    # Get Class
+                    # Usually class_out is [probability_vector]
+                    probs = class_out[0][0] # Adjust indexing based on actual shape (1, N)
+                    idx = np.argmax(probs)
+                    score = probs[idx]
+                    
+                    if score > 0.5:
+                        result_text = f"{self.labels[idx]} ({score:.2f})"
+                    else:
+                        result_text = "Uncertain"
+                        
+                except Exception as e:
+                    # In case of shape mismatches during development
+                    print(f"Pipeline flow error: {e}")
+                    result_text = "Pipeline Error"
 
         cv2.putText(vis_frame, result_text, (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
         return vis_frame
