@@ -1,0 +1,4 @@
+flask
+numpy
+opencv-python
+# Note: rknn-toolkit-lite2 must be installed from the Rockchip SDK wheels, not PyPI.
