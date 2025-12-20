@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 try:
-    from rknn.lite.api import RKNNLite
+    from rknnlite.api import RKNNLite
 except ImportError:
     print("Warning: rknn-toolkit-lite2 not found. NPU inference will fail.")
     # Dummy class for development/linting if library is missing
@@ -45,7 +45,7 @@ class GesturePipeline:
         # Normalization: MediaPipe TFLite models usually expect [0, 1] float32
         img = img.astype(np.float32) / 255.0
         # Add batch dimension: (1, 224, 224, 3)
-        input_data = np.expand_dims(img, axis=0)
+        input_data = np.expand_dims(img, 0)
         return input_data
 
     def process_frame(self, frame):
@@ -55,7 +55,6 @@ class GesturePipeline:
         """
         # copy frame for drawing
         vis_frame = frame.copy()
-        
         # 1. Hand Detection
         det_input = self.preprocess_image(frame, (224, 224))
         try:
@@ -63,12 +62,10 @@ class GesturePipeline:
         except Exception as e:
             print(f"Inference Error (Det): {e}")
             return vis_frame
-        
         # Helper: Parse detection output
         # WARNING: This is a simplifed parser. Real production use requires 
         # decoding the specific SSD anchor boxes of the model version used.
         box = self._parse_detection(det_out, frame.shape)
-        
         result_text = "No Hand"
         
         if box is not None:
@@ -87,12 +84,11 @@ class GesturePipeline:
                 land_input = self.preprocess_image(roi, (224, 224))
                 try:
                     land_out = self.landmark.run(land_input)
-                    
                     # 3. Landmarks -> Embedding
                     # Note: gesture_embedder often takes the raw landmark tensor (1, 42) or (1, 63)
                     # We pass the output of landmark detector directly
-                    embed_out = self.embedder.run(land_out[0])
-                    
+                    land_out = np.expand_dims(land_out[0], axis=-1)
+                    embed_out = self.embedder.run(land_out)
                     # 4. Classification
                     # Takes the embedding vector
                     class_out = self.classifier.run(embed_out[0])
