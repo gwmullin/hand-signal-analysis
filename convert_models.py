@@ -8,6 +8,33 @@ TASK_FILE = 'gesture_recognizer.task'
 MODEL_DIR = 'models'
 TARGET_PLATFORM = 'rk3588'
 
+def recursive_extract(file_path, base_output_dir):
+    """Recursively extracts .task and .zip files."""
+    try:
+        if not zipfile.is_zipfile(file_path):
+            return
+
+        # Create a folder for this container if we are deeper in recursion
+        # or just extract to base if it's the root file
+        current_bad_name = os.path.basename(file_path)
+        extract_dir = os.path.join(base_output_dir, current_bad_name + "_extracted")
+        if not os.path.exists(extract_dir):
+            os.makedirs(extract_dir)
+            
+        print(f"Extracting {file_path} to {extract_dir}...")
+        with zipfile.ZipFile(file_path, 'r') as zip_ref:
+            zip_ref.extractall(extract_dir)
+            
+        # Check specific extraction for nested files
+        for root, dirs, files in os.walk(extract_dir):
+            for file in files:
+                if file.endswith('.task') or file.endswith('.zip'):
+                    full_path = os.path.join(root, file)
+                    recursive_extract(full_path, extract_dir)
+                    
+    except Exception as e:
+        print(f"Warning: Failed to extract {file_path}: {e}")
+
 def extract_models():
     """Extracts tflite models from the mediapipe .task file"""
     if not os.path.exists(TASK_FILE):
@@ -17,16 +44,7 @@ def extract_models():
     if not os.path.exists(MODEL_DIR):
         os.makedirs(MODEL_DIR)
 
-    print(f"Extracting {TASK_FILE}...")
-    with zipfile.ZipFile(TASK_FILE, 'r') as zip_ref:
-        zip_ref.extractall(MODEL_DIR)
-    
-    # The task file structure is complex, usually:
-    # - hand_detector.tflite
-    # - hand_landmarks_detector.tflite
-    # - gesture_embedder.tflite
-    # - canned_gesture_classifier.tflite
-    # (Note: Actual filenames inside the task zip might vary, we might need to find them)
+    recursive_extract(TASK_FILE, MODEL_DIR)
     
     print("Extraction complete. Checking for models...")
     # List files to help user identify them if names don't match exactly
